@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>语音转文字助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 录音时的呼吸灯动画 */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .recording-pulse {
+            animation: pulse-ring 2s infinite;
+        }
+        
+        /* 隐藏滚动条但允许滚动 */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 播放时的波纹动画 */
+        @keyframes sound-wave {
+            0% { height: 4px; }
+            50% { height: 16px; }
+            100% { height: 4px; }
+        }
+        .playing-wave .bar {
+            animation: sound-wave 1s infinite ease-in-out;
+        }
+        .playing-wave .bar:nth-child(2) { animation-delay: 0.1s; }
+        .playing-wave .bar:nth-child(3) { animation-delay: 0.2s; }
+        .playing-wave .bar:nth-child(4) { animation-delay: 0.3s; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-[100dvh] w-screen overflow-hidden flex flex-col font-sans">
+
+    <!-- 顶部标题栏 -->
+    <header class="flex-none bg-white shadow-sm py-3 px-4 md:px-6 flex justify-between items-center z-10">
+        <div class="flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-600"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            <h1 class="text-lg md:text-xl font-bold text-slate-800">语音转文字助手</h1>
+        </div>
+        <div id="status-badge" class="px-2 py-0.5 rounded-full text-[10px] md:text-xs font-medium bg-slate-200 text-slate-500 transition-colors duration-300">
+            准备就绪
+        </div>
+    </header>
+
+    <!-- 主要内容区 -->
+    <main class="flex-1 flex flex-col max-w-3xl w-full mx-auto p-4 gap-4 min-h-0">
+        
+        <!-- 错误提示区 -->
+        <div id="error-box" class="hidden flex-none bg-red-50 border border-red-200 text-red-600 px-4 py-2 rounded-lg text-sm flex items-start gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="mt-0.5 shrink-0"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+            <span id="error-message">发生错误</span>
+        </div>
+
+        <!-- 文本显示区域 -->
+        <div class="flex-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 relative flex flex-col min-h-0 group">
+            <!-- 提示占位符 -->
+            <div id="placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-slate-400 p-6 pointer-events-none transition-opacity duration-300 z-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-3 opacity-50"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <p class="text-center text-sm md:text-base">点击麦克风说话<br>结束后可回放和下载</p>
+            </div>
+
+            <!-- 实际文本内容 -->
+            <div id="result-container" class="flex-1 overflow-y-auto no-scrollbar text-lg leading-relaxed text-slate-700 whitespace-pre-wrap outline-none z-10 p-1" contenteditable="true"></div>
+            
+            <!-- 临时结果 -->
+            <div id="interim-result" class="flex-none text-slate-400 text-lg leading-relaxed italic mt-2 min-h-[1.5em] z-10 px-1"></div>
+        </div>
+
+        <!-- 底部控制栏 -->
+        <div class="flex-none flex flex-col items-center gap-3 pb-2 md:pb-4 pt-1">
+            
+            <!-- 播放控制条 (有录音时才显示) -->
+            <div id="audio-controls" class="hidden w-full max-w-sm bg-white border border-slate-200 rounded-xl p-2 flex items-center justify-between shadow-sm animate-fade-in transition-all">
+                <div class="flex items-center gap-3 pl-2">
+                     <!-- 播放动画 -->
+                     <div id="wave-anim" class="flex items-center gap-1 h-4 w-8 opacity-50">
+                        <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
+                        <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
+                        <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
+                        <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
+                    </div>
+                    <span class="text-xs text-slate-500 font-medium">录音已保存</span>
+                </div>
+                
+                <button id="play-btn" class="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-colors">
+                    <svg id="play-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <svg id="pause-icon" class="hidden" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                    <span id="play-text">播放录音</span>
+                </button>
+            </div>
+
+            <!-- 主控按钮 -->
+            <div class="flex items-center gap-4">
+                <button id="toggle-btn" class="relative group transition-all duration-300 transform active:scale-95 touch-manipulation">
+                    <div id="pulse-ring" class="absolute inset-0 rounded-full bg-red-500 opacity-0 transition-opacity duration-300"></div>
+                    <div id="btn-bg" class="w-14 h-14 md:w-16 md:h-16 rounded-full bg-blue-600 shadow-lg shadow-blue-200 flex items-center justify-center transition-colors duration-300 group-hover:bg-blue-700">
+                        <svg id="mic-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                        <svg id="stop-icon" class="hidden" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                    </div>
+                </button>
+            </div>
+            <p id="instruction-text" class="text-[10px] text-slate-400 font-medium -mt-1">点击开始</p>
+
+            <!-- 工具按钮网格 -->
+            <div class="grid grid-cols-2 gap-2 w-full max-w-sm px-4">
+                <!-- 文本下载 -->
+                <button id="download-txt-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                    下载文本
+                </button>
+                <!-- 音频下载 -->
+                <button id="download-audio-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                    下载录音
+                </button>
+                <!-- 复制 -->
+                <button id="copy-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                    复制文本
+                </button>
+                <!-- 清空 -->
+                <button id="clear-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    清空全部
+                </button>
+            </div>
+        </div>
+    </main>
+
+    <!-- 复制成功的 Toast 提示 -->
+    <div id="toast" class="fixed top-20 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm opacity-0 transition-opacity duration-300 pointer-events-none z-50">
+        已复制
+    </div>
+
+    <script>
+        // DOM 元素引用
+        const toggleBtn = document.getElementById('toggle-btn');
+        const btnBg = document.getElementById('btn-bg');
+        const pulseRing = document.getElementById('pulse-ring');
+        const micIcon = document.getElementById('mic-icon');
+        const stopIcon = document.getElementById('stop-icon');
+        const instructionText = document.getElementById('instruction-text');
+        const statusBadge = document.getElementById('status-badge');
+        
+        const resultContainer = document.getElementById('result-container');
+        const interimResult = document.getElementById('interim-result');
+        const placeholder = document.getElementById('placeholder');
+        const errorBox = document.getElementById('error-box');
+        const errorMessage = document.getElementById('error-message');
+        
+        const copyBtn = document.getElementById('copy-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const downloadTxtBtn = document.getElementById('download-txt-btn');
+        const downloadAudioBtn = document.getElementById('download-audio-btn');
+        
+        const audioControls = document.getElementById('audio-controls');
+        const playBtn = document.getElementById('play-btn');
+        const playIcon = document.getElementById('play-icon');
+        const pauseIcon = document.getElementById('pause-icon');
+        const playText = document.getElementById('play-text');
+        const waveAnim = document.getElementById('wave-anim');
+        const toast = document.getElementById('toast');
+
+        // 状态变量
+        let isRecording = false; 
+        let recognition = null;
+        let finalTranscript = '';
+        
+        // 音频录制相关变量
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let audioBlob = null;
+        let audioUrl = null;
+        let currentAudio = null;
+
+        // 错误重试
+        let retryCount = 0;
+        const MAX_RETRIES = 3;
+        let retryTimeout = null;
+
+        // 初始化 SpeechRecognition
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = 'zh-CN';
+
+            recognition.onstart = () => {
+                retryCount = 0;
+                hideError();
+                if (isRecording) updateUIState(true);
+            };
+
+            recognition.onend = () => {
+                if (isRecording) {
+                    // 如果识别断了但我们还在录音状态，尝试重启识别
+                    // 但不涉及 mediaRecorder，因为它通常不会自己断
+                    try { recognition.start(); } catch(e){}
+                } else {
+                    updateUIState(false);
+                }
+            };
+
+            recognition.onresult = (event) => {
+                retryCount = 0;
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript;
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                updateTextDisplay(finalTranscript, interimTranscript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Speech recognition error', event.error);
+                if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                    showError('无法访问麦克风或服务被拒绝。');
+                    fullStop();
+                } else if (event.error === 'network') {
+                    if (isRecording && retryCount < MAX_RETRIES) {
+                        retryCount++;
+                        showError(`网络不稳定，重连中 (${retryCount})...`);
+                        setTimeout(() => { 
+                            if(isRecording) try { recognition.start(); } catch(e){} 
+                        }, 1000);
+                    } else {
+                        showError('网络错误，请检查连接。');
+                        fullStop();
+                    }
+                }
+            };
+        } else {
+            showError('您的浏览器不支持语音识别。请使用 Chrome, Edge 或 Safari。');
+            toggleBtn.disabled = true;
+            btnBg.classList.add('bg-slate-300');
+        }
+
+        // 核心流程控制
+        async function toggleRecording() {
+            if (!recognition) return;
+
+            if (isRecording) {
+                // 停止录制
+                fullStop();
+            } else {
+                // 开始录制
+                startRecordingSession();
+            }
+        }
+
+        async function startRecordingSession() {
+            try {
+                // 1. 获取麦克风流 (用于录音文件)
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                
+                // 2. 初始化 MediaRecorder
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = () => {
+                    // 创建音频 Blob
+                    audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); // webm 在 Chrome/Edge 很稳
+                    // 如果在 Safari，可能需要 MP4 或其他格式，但现代浏览器多支持 webm/ogg
+                    // 即使 Safari 不支持播放 webm，它通常能录制。
+                    
+                    if (audioUrl) URL.revokeObjectURL(audioUrl);
+                    audioUrl = URL.createObjectURL(audioBlob);
+                    
+                    // 启用下载和播放按钮
+                    downloadAudioBtn.disabled = false;
+                    audioControls.classList.remove('hidden');
+                    
+                    // 停止麦克风流的所有轨道，释放硬件
+                    stream.getTracks().forEach(track => track.stop());
+                };
+
+                // 3. 启动两者
+                mediaRecorder.start();
+                recognition.start();
+                
+                isRecording = true;
+                updateUIState(true);
+                hideError();
+                
+                // 清理旧的播放器状态
+                stopAudioPlayback();
+                audioControls.classList.add('hidden');
+                downloadAudioBtn.disabled = true;
+
+            } catch (err) {
+                console.error("Microphone access error:", err);
+                showError('无法启动录音，请确保授予麦克风权限。');
+            }
+        }
+
+        function fullStop() {
+            isRecording = false;
+            updateUIState(false);
+            
+            // 停止识别
+            try { recognition.stop(); } catch(e){}
+            
+            // 停止录音
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+
+        // 音频播放控制
+        playBtn.addEventListener('click', () => {
+            if (!audioUrl) return;
+
+            if (currentAudio && !currentAudio.paused) {
+                // 暂停
+                currentAudio.pause();
+                updatePlayUI(false);
+            } else {
+                // 播放
+                if (!currentAudio) {
+                    currentAudio = new Audio(audioUrl);
+                    currentAudio.onended = () => {
+                        updatePlayUI(false);
+                        currentAudio = null; // 播放结束重置
+                    };
+                }
+                currentAudio.play();
+                updatePlayUI(true);
+            }
+        });
+
+        function stopAudioPlayback() {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio = null;
+            }
+            updatePlayUI(false);
+        }
+
+        function updatePlayUI(isPlaying) {
+            if (isPlaying) {
+                playIcon.classList.add('hidden');
+                pauseIcon.classList.remove('hidden');
+                playText.textContent = '暂停播放';
+                waveAnim.classList.add('playing-wave');
+                waveAnim.classList.remove('opacity-50');
+            } else {
+                playIcon.classList.remove('hidden');
+                pauseIcon.classList.add('hidden');
+                playText.textContent = '播放录音';
+                waveAnim.classList.remove('playing-wave');
+                waveAnim.classList.add('opacity-50');
+            }
+        }
+
+        // UI 更新逻辑
+        function updateUIState(recording) {
+            if (recording) {
+                btnBg.classList.remove('bg-blue-600', 'group-hover:bg-blue-700');
+                btnBg.classList.add('bg-red-500');
+                pulseRing.classList.add('recording-pulse');
+                micIcon.classList.add('hidden');
+                stopIcon.classList.remove('hidden');
+                instructionText.textContent = '点击停止';
+                instructionText.classList.add('text-red-500');
+                statusBadge.textContent = '录音中';
+                statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] md:text-xs font-medium bg-red-100 text-red-600';
+            } else {
+                btnBg.classList.add('bg-blue-600', 'group-hover:bg-blue-700');
+                btnBg.classList.remove('bg-red-500');
+                pulseRing.classList.remove('recording-pulse');
+                micIcon.classList.remove('hidden');
+                stopIcon.classList.add('hidden');
+                instructionText.textContent = '点击开始';
+                instructionText.classList.remove('text-red-500');
+                statusBadge.textContent = '准备就绪';
+                statusBadge.className = 'px-2 py-0.5 rounded-full text-[10px] md:text-xs font-medium bg-slate-200 text-slate-500';
+            }
+        }
+
+        function updateTextDisplay(final, interim) {
+            if (final || interim) {
+                placeholder.style.opacity = '0';
+            } else {
+                placeholder.style.opacity = '1';
+            }
+            resultContainer.innerText = final;
+            interimResult.innerText = interim;
+            if (isRecording) {
+                resultContainer.scrollTop = resultContainer.scrollHeight;
+            }
+        }
+
+        function showError(msg) {
+            errorBox.classList.remove('hidden');
+            errorMessage.textContent = msg;
+        }
+        function hideError() {
+            errorBox.classList.add('hidden');
+        }
+
+        // 按钮功能绑定
+        toggleBtn.addEventListener('click', toggleRecording);
+
+        clearBtn.addEventListener('click', () => {
+            finalTranscript = '';
+            updateTextDisplay('', '');
+            stopAudioPlayback();
+            audioControls.classList.add('hidden');
+            downloadAudioBtn.disabled = true;
+            audioUrl = null;
+            audioBlob = null;
+            resultContainer.focus();
+        });
+
+        copyBtn.addEventListener('click', () => {
+            if (!finalTranscript) return;
+            navigator.clipboard.writeText(finalTranscript).then(showToast).catch(() => {
+                // 备用复制方案
+                const ta = document.createElement("textarea");
+                ta.value = finalTranscript;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showToast();
+            });
+        });
+
+        // 下载文本
+        downloadTxtBtn.addEventListener('click', () => {
+            if (!finalTranscript) return;
+            const blob = new Blob([finalTranscript], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `听写记录_${new Date().toLocaleString().replace(/[/: ]/g, '_')}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // 下载音频
+        downloadAudioBtn.addEventListener('click', () => {
+            if (!audioUrl) return;
+            const a = document.createElement('a');
+            a.href = audioUrl;
+            // 确定扩展名
+            const ext = audioBlob.type.includes('webm') ? 'webm' : 'audio';
+            a.download = `录音文件_${new Date().toLocaleString().replace(/[/: ]/g, '_')}.${ext}`;
+            a.click();
+        });
+
+        function showToast() {
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 2000);
+        }
+
+        resultContainer.addEventListener('input', (e) => {
+            finalTranscript = e.target.innerText;
+        });
+    </script>
+</body>
+</html>
