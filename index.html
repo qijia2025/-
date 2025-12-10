@@ -79,10 +79,9 @@
         <!-- 底部控制栏 -->
         <div class="flex-none flex flex-col items-center gap-3 pb-2 md:pb-4 pt-1">
             
-            <!-- 播放控制条 (有录音时才显示) -->
+            <!-- 播放控制条 -->
             <div id="audio-controls" class="hidden w-full max-w-sm bg-white border border-slate-200 rounded-xl p-2 flex items-center justify-between shadow-sm animate-fade-in transition-all">
                 <div class="flex items-center gap-3 pl-2">
-                     <!-- 播放动画 -->
                      <div id="wave-anim" class="flex items-center gap-1 h-4 w-8 opacity-50">
                         <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
                         <div class="bar w-1 bg-blue-500 rounded-full h-1"></div>
@@ -113,22 +112,18 @@
 
             <!-- 工具按钮网格 -->
             <div class="grid grid-cols-2 gap-2 w-full max-w-sm px-4">
-                <!-- 文本下载 -->
                 <button id="download-txt-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                     下载文本
                 </button>
-                <!-- 音频下载 -->
                 <button id="download-audio-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                     下载录音
                 </button>
-                <!-- 复制 -->
                 <button id="copy-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
                     复制文本
                 </button>
-                <!-- 清空 -->
                 <button id="clear-btn" class="flex items-center justify-center gap-2 px-3 py-2 bg-white border border-slate-200 rounded-xl text-slate-600 text-xs font-medium shadow-sm hover:bg-slate-50 active:bg-slate-100 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     清空全部
@@ -137,10 +132,12 @@
         </div>
     </main>
 
-    <!-- 复制成功的 Toast 提示 -->
     <div id="toast" class="fixed top-20 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm opacity-0 transition-opacity duration-300 pointer-events-none z-50">
         已复制
     </div>
+
+    <!-- 隐藏的音频元素 -->
+    <audio id="audio-player" class="hidden" playsinline></audio>
 
     <script>
         // DOM 元素引用
@@ -170,6 +167,7 @@
         const playText = document.getElementById('play-text');
         const waveAnim = document.getElementById('wave-anim');
         const toast = document.getElementById('toast');
+        const audioPlayer = document.getElementById('audio-player');
 
         // 状态变量
         let isRecording = false; 
@@ -181,14 +179,13 @@
         let audioChunks = [];
         let audioBlob = null;
         let audioUrl = null;
-        let currentAudio = null;
+        let recordedMimeType = ''; // 记录实际使用的格式
 
         // 错误重试
         let retryCount = 0;
         const MAX_RETRIES = 3;
-        let retryTimeout = null;
 
-        // 初始化 SpeechRecognition
+        // 初始化 SpeechRecognition (语音转文字)
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             recognition = new SpeechRecognition();
@@ -204,8 +201,6 @@
 
             recognition.onend = () => {
                 if (isRecording) {
-                    // 如果识别断了但我们还在录音状态，尝试重启识别
-                    // 但不涉及 mediaRecorder，因为它通常不会自己断
                     try { recognition.start(); } catch(e){}
                 } else {
                     updateUIState(false);
@@ -228,129 +223,136 @@
             recognition.onerror = (event) => {
                 console.error('Speech recognition error', event.error);
                 if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-                    showError('无法访问麦克风或服务被拒绝。');
+                    showError('无法访问麦克风权限。');
                     fullStop();
                 } else if (event.error === 'network') {
                     if (isRecording && retryCount < MAX_RETRIES) {
                         retryCount++;
-                        showError(`网络不稳定，重连中 (${retryCount})...`);
-                        setTimeout(() => { 
-                            if(isRecording) try { recognition.start(); } catch(e){} 
-                        }, 1000);
+                        setTimeout(() => { if(isRecording) try { recognition.start(); } catch(e){} }, 1000);
                     } else {
-                        showError('网络错误，请检查连接。');
-                        fullStop();
+                        showError('网络不稳定，无法识别文字 (但录音仍在进行)');
+                        // 注意：这里不停止录音，只提示文字识别失败
                     }
                 }
             };
         } else {
-            showError('您的浏览器不支持语音识别。请使用 Chrome, Edge 或 Safari。');
-            toggleBtn.disabled = true;
-            btnBg.classList.add('bg-slate-300');
+            showError('您的浏览器不支持语音转文字。建议使用 Chrome/Safari/Edge。');
         }
 
         // 核心流程控制
         async function toggleRecording() {
-            if (!recognition) return;
-
             if (isRecording) {
-                // 停止录制
                 fullStop();
             } else {
-                // 开始录制
                 startRecordingSession();
             }
         }
 
         async function startRecordingSession() {
             try {
-                // 1. 获取麦克风流 (用于录音文件)
+                // 1. 获取麦克风流
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 
-                // 2. 初始化 MediaRecorder
-                mediaRecorder = new MediaRecorder(stream);
+                // 2. 智能检测支持的格式 (这是解决手机无声的关键!)
+                let options = {};
+                const mimeTypes = [
+                    'audio/mp4', // iOS 优先
+                    'audio/webm;codecs=opus', // Chrome/Android 优先
+                    'audio/webm',
+                    'audio/ogg'
+                ];
+
+                for (const type of mimeTypes) {
+                    if (MediaRecorder.isTypeSupported(type)) {
+                        options.mimeType = type;
+                        console.log("Using supported mimeType:", type);
+                        break;
+                    }
+                }
+
+                // 3. 初始化 MediaRecorder
+                mediaRecorder = new MediaRecorder(stream, options);
+                recordedMimeType = mediaRecorder.mimeType; // 记录最终系统决定的格式
                 audioChunks = [];
                 
                 mediaRecorder.ondataavailable = (event) => {
-                    audioChunks.push(event.data);
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
                 };
 
                 mediaRecorder.onstop = () => {
-                    // 创建音频 Blob
-                    audioBlob = new Blob(audioChunks, { type: 'audio/webm' }); // webm 在 Chrome/Edge 很稳
-                    // 如果在 Safari，可能需要 MP4 或其他格式，但现代浏览器多支持 webm/ogg
-                    // 即使 Safari 不支持播放 webm，它通常能录制。
+                    // 使用录制时确定的格式创建 Blob
+                    audioBlob = new Blob(audioChunks, { type: recordedMimeType });
                     
                     if (audioUrl) URL.revokeObjectURL(audioUrl);
                     audioUrl = URL.createObjectURL(audioBlob);
                     
-                    // 启用下载和播放按钮
+                    // 设置播放器源，但不自动播放
+                    audioPlayer.src = audioUrl;
+                    
                     downloadAudioBtn.disabled = false;
                     audioControls.classList.remove('hidden');
                     
-                    // 停止麦克风流的所有轨道，释放硬件
                     stream.getTracks().forEach(track => track.stop());
                 };
 
-                // 3. 启动两者
                 mediaRecorder.start();
-                recognition.start();
+                if (recognition) try { recognition.start(); } catch(e){}
                 
                 isRecording = true;
                 updateUIState(true);
                 hideError();
                 
-                // 清理旧的播放器状态
+                // 重置播放状态
                 stopAudioPlayback();
                 audioControls.classList.add('hidden');
                 downloadAudioBtn.disabled = true;
 
             } catch (err) {
                 console.error("Microphone access error:", err);
-                showError('无法启动录音，请确保授予麦克风权限。');
+                showError('无法启动麦克风，请检查手机权限设置。');
             }
         }
 
         function fullStop() {
             isRecording = false;
             updateUIState(false);
-            
-            // 停止识别
-            try { recognition.stop(); } catch(e){}
-            
-            // 停止录音
+            if (recognition) try { recognition.stop(); } catch(e){}
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
             }
         }
 
-        // 音频播放控制
+        // 音频播放控制 (使用 HTML Audio 元素以获得更好兼容性)
         playBtn.addEventListener('click', () => {
             if (!audioUrl) return;
 
-            if (currentAudio && !currentAudio.paused) {
-                // 暂停
-                currentAudio.pause();
+            if (!audioPlayer.paused) {
+                audioPlayer.pause();
                 updatePlayUI(false);
             } else {
-                // 播放
-                if (!currentAudio) {
-                    currentAudio = new Audio(audioUrl);
-                    currentAudio.onended = () => {
-                        updatePlayUI(false);
-                        currentAudio = null; // 播放结束重置
-                    };
-                }
-                currentAudio.play();
-                updatePlayUI(true);
+                // iOS 需要用户交互才能播放，点击按钮正好满足
+                audioPlayer.play().then(() => {
+                    updatePlayUI(true);
+                }).catch(e => {
+                    console.error("Playback failed:", e);
+                    showError("播放失败，请尝试下载后播放");
+                });
             }
         });
 
+        audioPlayer.onended = () => {
+            updatePlayUI(false);
+        };
+
+        audioPlayer.onpause = () => {
+            updatePlayUI(false);
+        };
+
         function stopAudioPlayback() {
-            if (currentAudio) {
-                currentAudio.pause();
-                currentAudio = null;
-            }
+            audioPlayer.pause();
+            audioPlayer.currentTime = 0;
             updatePlayUI(false);
         }
 
@@ -433,7 +435,6 @@
         copyBtn.addEventListener('click', () => {
             if (!finalTranscript) return;
             navigator.clipboard.writeText(finalTranscript).then(showToast).catch(() => {
-                // 备用复制方案
                 const ta = document.createElement("textarea");
                 ta.value = finalTranscript;
                 document.body.appendChild(ta);
@@ -444,7 +445,6 @@
             });
         });
 
-        // 下载文本
         downloadTxtBtn.addEventListener('click', () => {
             if (!finalTranscript) return;
             const blob = new Blob([finalTranscript], { type: 'text/plain;charset=utf-8' });
@@ -456,13 +456,17 @@
             URL.revokeObjectURL(url);
         });
 
-        // 下载音频
         downloadAudioBtn.addEventListener('click', () => {
             if (!audioUrl) return;
             const a = document.createElement('a');
             a.href = audioUrl;
-            // 确定扩展名
-            const ext = audioBlob.type.includes('webm') ? 'webm' : 'audio';
+            
+            // 智能决定文件后缀
+            let ext = 'webm';
+            if (recordedMimeType.includes('mp4')) ext = 'mp4';
+            else if (recordedMimeType.includes('ogg')) ext = 'ogg';
+            else if (recordedMimeType.includes('wav')) ext = 'wav';
+            
             a.download = `录音文件_${new Date().toLocaleString().replace(/[/: ]/g, '_')}.${ext}`;
             a.click();
         });
