@@ -255,9 +255,11 @@
                 
                 // 2. 智能检测支持的格式 (这是解决手机无声的关键!)
                 let options = {};
+                // 扩充支持列表，增加 aac 和 mp4 的不同写法
                 const mimeTypes = [
-                    'audio/mp4', // iOS 优先
-                    'audio/webm;codecs=opus', // Chrome/Android 优先
+                    'audio/mp4', 
+                    'audio/aac',
+                    'audio/webm;codecs=opus', 
                     'audio/webm',
                     'audio/ogg'
                 ];
@@ -272,7 +274,8 @@
 
                 // 3. 初始化 MediaRecorder
                 mediaRecorder = new MediaRecorder(stream, options);
-                recordedMimeType = mediaRecorder.mimeType; // 记录最终系统决定的格式
+                // 关键修正：部分浏览器 mediaRecorder.mimeType 为空，需回退到 options.mimeType
+                recordedMimeType = mediaRecorder.mimeType || options.mimeType || ''; 
                 audioChunks = [];
                 
                 mediaRecorder.ondataavailable = (event) => {
@@ -282,14 +285,26 @@
                 };
 
                 mediaRecorder.onstop = () => {
+                    // 再次检查 mimeType，如果仍为空，根据浏览器环境猜测
+                    if (!recordedMimeType) {
+                        if (MediaRecorder.isTypeSupported('audio/mp4')) recordedMimeType = 'audio/mp4';
+                        else recordedMimeType = 'audio/webm';
+                    }
+
                     // 使用录制时确定的格式创建 Blob
                     audioBlob = new Blob(audioChunks, { type: recordedMimeType });
                     
+                    if (audioBlob.size === 0) {
+                        showError("录音失败：未检测到音频数据");
+                        return;
+                    }
+
                     if (audioUrl) URL.revokeObjectURL(audioUrl);
                     audioUrl = URL.createObjectURL(audioBlob);
                     
-                    // 设置播放器源，但不自动播放
+                    // 设置播放器源
                     audioPlayer.src = audioUrl;
+                    audioPlayer.load(); // 显式加载
                     
                     downloadAudioBtn.disabled = false;
                     audioControls.classList.remove('hidden');
